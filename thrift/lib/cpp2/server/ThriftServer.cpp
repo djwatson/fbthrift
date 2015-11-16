@@ -27,6 +27,7 @@
 #include <thrift/lib/cpp/concurrency/PosixThreadFactory.h>
 #include <thrift/lib/cpp/concurrency/ThreadManager.h>
 
+#include <sys/ioctl.h>
 #include <iostream>
 #include <random>
 #include <sys/socket.h>
@@ -79,11 +80,12 @@ const std::chrono::milliseconds ThriftServer::DEFAULT_TIMEOUT =
 class ThriftAcceptorFactory : public wangle::AcceptorFactory {
  public:
   explicit ThriftAcceptorFactory(ThriftServer* server)
-      : server_(server) {}
+      : server_(server) {
+  }
 
   std::shared_ptr<wangle::Acceptor> newAcceptor(
       folly::EventBase* eventBase) override {
-    return std::make_shared<Cpp2Worker>(server_, nullptr, eventBase);
+    return std::make_shared<Cpp2Worker>(server_, 0, nullptr, eventBase);
   }
  private:
   ThriftServer* server_;
@@ -350,7 +352,7 @@ void ThriftServer::setup() {
 
     } else {
       CHECK(configMutable());
-      duplexWorker_ = folly::make_unique<Cpp2Worker>(this, serverChannel_);
+      duplexWorker_ = folly::make_unique<Cpp2Worker>(this, -1, serverChannel_);
     }
 
     // Do not allow setters to be called past this point until the IO worker

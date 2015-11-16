@@ -47,11 +47,13 @@ class Cpp2ConnContext : public apache::thrift::server::TConnectionContext {
       requestHeader_(nullptr),
       duplexChannel_(duplexChannel) {
     if (address) {
-      peerAddress_ = *address;
+      //peerAddress_ = *address;
     }
+    /* TODO kcm socket doesn't support getAddrInfo.  It probably should in connected mode?
     if (socket) {
       socket->getLocalAddress(&localAddress_);
     }
+     */
   }
 
   const folly::SocketAddress* getLocalAddress() const {

@@ -23,6 +23,8 @@
 #include <thrift/lib/cpp/concurrency/Util.h>
 
 
+#include <linux/sockios.h>
+#include <sys/ioctl.h>
 #include <iostream>
 #include <sys/socket.h>
 #include <sys/uio.h>
@@ -66,22 +68,80 @@ void Cpp2Worker::onNewConnection(
 
   TAsyncSocket* tsock = dynamic_cast<TAsyncSocket*>(sock.release());
   CHECK(tsock);
+
   auto asyncSocket = std::shared_ptr<TAsyncSocket>(tsock, TAsyncSocket::Destructor());
 
   VLOG(4) << "Cpp2Worker: Creating connection for socket " <<
-    asyncSocket->getFd();
+    tsock->getFd();
 
-  asyncSocket->setShutdownSocketSet(server_->shutdownSocketSet_.get());
-  std::shared_ptr<Cpp2Connection> result(
-    new Cpp2Connection(asyncSocket, addr, this));
-  Acceptor::addConnection(result.get());
-  result->addConnection(result);
-  result->start();
-
-  VLOG(4) << "created connection for fd " << asyncSocket->getFd();
-  if (observer) {
-    observer->connAccepted();
+  int kfd = socket(AF_KCM, SOCK_SEQPACKET, KCMPROTO_CONNECTED);
+  if (kfd < 0) {
+    perror("Open KCM socket");
+    exit(1);
   }
+
+  int bpfd = getServer()->getBpfFd();
+
+      // Attach to kcm_sock_
+      struct kcm_attach {
+        int fd;
+        int bpf_fd;
+      } info;
+
+#define SIOCKCMATTACH   (SIOCPROTOPRIVATE + 0)
+#define SIOCKCMCLONE   (SIOCPROTOPRIVATE + 2)
+      info.fd = tsock->getFd();
+      info.bpf_fd = bpfd;
+
+          if (ioctl(kfd, SIOCKCMATTACH, &info) < 0) {
+          perror("kcm_attach");
+          exit(-1);
+        }
+      int i = 0;
+      getServer()->forEachWorker([&i,kfd, addr](wangle::Acceptor* acceptor) mutable {
+          CHECK(kfd >= 0);
+          struct kcm_clone {
+            int fd;
+          } newkfd;
+          newkfd.fd = 0;
+          if (i++ != 0) {
+            if (ioctl(kfd, SIOCKCMCLONE, &newkfd) < 0) {
+              perror("kcm clone");
+            }
+
+          } else {
+            newkfd.fd = kfd;
+          }
+          if (newkfd.fd <= 0)
+            return;
+
+          acceptor->getEventBase()->runInEventBaseThread([newkfd,acceptor,addr](){
+              CHECK(newkfd.fd > 0);
+              auto worker = dynamic_cast<Cpp2Worker*>(acceptor);
+              auto asyncSocket = TAsyncSocket::newSocket(acceptor->getEventBase(), newkfd.fd);
+
+              //asyncSocket->setShutdownSocketSet(server_->shutdownSocketSet_.get());
+              std::shared_ptr<Cpp2Connection> result(
+                new Cpp2Connection(asyncSocket, addr, worker));
+              acceptor->addConnection(result.get());
+              result->addConnection(result);
+              result->start();
+            });
+        });
+
+      // Add underlying socket to epoll loop for errors
+      // TODO: close all kcm sockets on close.
+      std::shared_ptr<Cpp2Connection> result(
+        new Cpp2Connection(asyncSocket, addr, this));
+      Acceptor::addConnection(result.get());
+      result->addConnection(result);
+      result->start();
+
+
+      VLOG(4) << "created connection for fd " << tsock->getFd();
+      if (observer) {
+        observer->connAccepted();
+      }
 }
 
 void Cpp2Worker::useExistingChannel(

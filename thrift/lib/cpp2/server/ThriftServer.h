@@ -47,6 +47,13 @@
 #include <wangle/ssl/SSLContextConfig.h>
 #include <wangle/acceptor/ServerSocketConfig.h>
 
+extern "C" {
+#include "bpf/bpf.h"
+#include "bpf/bpf_load.h"
+#include "bpf/libbpf.h"
+}
+
+
 namespace apache { namespace thrift {
 
 typedef std::function<void(
@@ -295,7 +302,26 @@ class ThriftServer : public apache::thrift::server::TServer
 
   getHandlerFunc getHandler_;
 
+  #define AF_KCM		41
+  #define KCMPROTO_CONNECTED	0
+  #define KCMPROTO_UNCONNECTED	1
+
+  int bpf_fd{-1};
+
  public:
+
+  int getBpfFd() {
+    if (bpf_fd < 0) {
+      if (load_bpf_file((char*)"thrift_kern.o") != 0) {
+        printf( "BPF load fail %s\n", bpf_log_buf);
+        return -1;
+      } else {
+        bpf_fd = prog_fd[0];
+      }
+    }
+    return bpf_fd;
+  }
+
   ThriftServer();
 
   // If sasl_policy is set. FLAGS_sasl_policy will be ignored for this server

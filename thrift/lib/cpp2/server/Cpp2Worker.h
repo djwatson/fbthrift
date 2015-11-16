@@ -55,11 +55,13 @@ class Cpp2Worker
    * @param serverChannel existing server channel to use, only for duplex server
    */
   explicit Cpp2Worker(ThriftServer* server,
+                      int kcm_fd,
              const std::shared_ptr<HeaderServerChannel>&
              serverChannel = nullptr,
              folly::EventBase* eventBase = nullptr) :
     Acceptor(server->getServerSocketConfig()),
     server_(server),
+    kcm_fd_(kcm_fd),
     eventBase_(eventBase),
     activeRequests_(0),
     pendingCount_(0),
@@ -103,6 +105,8 @@ class Cpp2Worker
  private:
   /// The mother ship.
   ThriftServer* server_;
+
+  int kcm_fd_{-1};
 
   /// An instance's TEventBase for I/O.
   apache::thrift::async::TEventBase* eventBase_;
